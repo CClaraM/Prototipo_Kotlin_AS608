@@ -141,17 +141,6 @@ object AS608Protocol {
                 data[6] == PACKAGE_ACK                                // paquete de respuesta
     }
 
-    /** Devuelve el código de confirmación (0x00 éxito, 0x02 sin huella, etc.)
-     *  Retorna -1 si el paquete no es válido. */
-    /** fun getConfirmationCode(data: ByteArray): Int {
-        if (data.size < 12) return -1  // 👈 evita lecturas cortas falsas
-
-        if (data[0] == 0xEF.toByte() && data[1] == 0x01.toByte() && data[6] == 0x07.toByte()) {
-            return data[9].toInt() and 0xFF
-        }
-        return -1
-    } */
-
     /** (Opcional) Traducción a texto del código numérico. */
     fun confirmationMessage(code: Int): String = when (code) {
         0x00 -> "✅ Huella detectada" // ⬅️ No mostrar nada en éxito

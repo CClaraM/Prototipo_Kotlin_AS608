@@ -50,7 +50,19 @@ class AS608Helper(private val context: Context) {
         serial?.setParameters(57600, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
 
         onStatus("🔌 AS608 conectado")
-        sendCommand(AS608Protocol.handshake())
+
+        // ✨ Enviamos el handshake y limpiamos el buffer en una corrutina
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                drainBuffer(300)
+                sendCommand(AS608Protocol.handshake())
+                delay(200)
+                drainBuffer(200)
+                Log.d(TAG, "Buffer inicial limpiado correctamente")
+            } catch (e: Exception) {
+                Log.e(TAG,"❌ Error al limpiar buffer inicial: ${e.message}")
+            }
+        }
     }
 
     fun stop() {
