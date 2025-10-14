@@ -277,9 +277,217 @@ class AS608Helper(private val context: Context) {
         }
     }
 
+    // =======================================================
+    // 🔹 7) Descarga y Cargar el template
+    // =======================================================
+    //Flujo: send(upChar) → stream ACK + DATA (pid 0x02/0x08) → acumular payload → devolver ByteArray
+    fun downloadTemplate(
+        bufferId: Int = 1,
+        onResult: (ByteArray?) -> Unit
+    ) {
+        if (isReading.get()) {
+            onStatus?.invoke("⏳ Operación en curso…")
+            onResult(null)
+            return
+        }
+        isReading.set(true)
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                onStatus?.invoke("📥 Solicitando template (UpChar)...")
+                sendCommand(AS608Protocol.upChar(bufferId))
+
+                val rawBuffer = ArrayList<Byte>(8 * 1024)
+                val templateBuffer = ArrayList<Byte>(1024) // típicamente ~512 bytes
+                val temp = ByteArray(2048)
+
+                var ackOk = false
+                var lastSeen = false
+                val tEnd = System.currentTimeMillis() + 8000
+                var lastTs = System.currentTimeMillis()
+
+                while (System.currentTimeMillis() < tEnd) {
+                    val n = try { serial?.read(temp, 200) ?: 0 } catch (_: Exception) { 0 }
+                    if (n > 0) {
+                        for (i in 0 until n) rawBuffer.add(temp[i])
+                        lastTs = System.currentTimeMillis()
+
+                        // parse paquetes
+                        while (rawBuffer.size >= 9) {
+                            // sincronizar header
+                            if (!(rawBuffer[0] == 0xEF.toByte() && rawBuffer[1] == 0x01.toByte())) {
+                                rawBuffer.removeAt(0); continue
+                            }
+                            if (rawBuffer.size < 9) break
+
+                            val pid = rawBuffer[6].toInt() and 0xFF
+                            val lenH = rawBuffer[7].toInt() and 0xFF
+                            val lenL = rawBuffer[8].toInt() and 0xFF
+                            val length = (lenH shl 8) or lenL
+                            val total = 9 + length
+                            if (rawBuffer.size < total) break
+
+                            val payloadLen = length - 2
+                            val payloadStart = 9
+                            val payloadEnd = payloadStart + payloadLen
+
+                            when (pid) {
+                                0x07 -> { // ACK
+                                    val code = if (payloadLen >= 1) (rawBuffer[payloadStart].toInt() and 0xFF) else -1
+                                    if (code == 0x00) {
+                                        ackOk = true
+                                        Log.d(TAG, "🤝 UpChar ACK OK")
+                                    } else {
+                                        Log.w(TAG, "⚠️ UpChar ACK code=$code")
+                                    }
+                                    repeat(total) { rawBuffer.removeAt(0) }
+                                }
+                                0x02, 0x08 -> { // DATA
+                                    for (i in payloadStart until payloadEnd) templateBuffer.add(rawBuffer[i])
+                                    if (pid == 0x08) {
+                                        lastSeen = true
+                                        Log.d(TAG, "🟢 Último paquete de template recibido (size parc=${templateBuffer.size})")
+                                    }
+                                    repeat(total) { rawBuffer.removeAt(0) }
+                                }
+                                else -> {
+                                    // desconocido → re-sync
+                                    rawBuffer.removeAt(0)
+                                }
+                            }
+                            // limpiar basura entre paquetes
+                            while (rawBuffer.size >= 2 &&
+                                !(rawBuffer[0] == 0xEF.toByte() && rawBuffer[1] == 0x01.toByte())) {
+                                rawBuffer.removeAt(0)
+                            }
+                        }
+
+                        if (lastSeen) break
+                    } else {
+                        if (System.currentTimeMillis() - lastTs > 1000) break
+                    }
+                }
+
+                val result = if (ackOk && templateBuffer.isNotEmpty()) templateBuffer.toByteArray() else null
+                withContext(Dispatchers.Main) {
+                    if (result != null) {
+                        onStatus?.invoke("✅ Template descargado (${result.size} bytes)")
+                    } else {
+                        onStatus?.invoke("⚠️ No se pudo descargar el template")
+                    }
+                    onResult(result)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error en downloadTemplate: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("❌ Error descargando template: ${e.message}")
+                    onResult(null)
+                }
+            } finally {
+                isReading.set(false)
+            }
+        }
+    }
+
+    fun uploadTemplate(
+        bufferId: Int = 1,
+        template: ByteArray,
+        onResult: (Boolean) -> Unit
+    ) {
+        if (isReading.get()) {
+            onStatus?.invoke("⏳ Operación en curso…")
+            onResult(false)
+            return
+        }
+        isReading.set(true)
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                onStatus?.invoke("📤 Enviando template (DownChar)...")
+                sendCommand(AS608Protocol.downChar(bufferId))
+
+                // esperar pequeño ACK del downChar
+                val ack = readResponse(1500)
+                val ackCode = if (ack != null) AS608Protocol.getConfirmationCode(ack) else -1
+                if (ackCode != 0x00) {
+                    withContext(Dispatchers.Main) {
+                        onStatus?.invoke("❌ DownChar rechazado (code=$ackCode)")
+                        onResult(false)
+                    }
+                    return@launch
+                }
+
+                // enviar datos en paquetes de 128 bytes (DATA 0x02 y último 0x08)
+                val chunkSize = 128
+                var pos = 0
+                while (pos < template.size) {
+                    val remaining = template.size - pos
+                    val take = if (remaining > chunkSize) chunkSize else remaining
+                    val chunk = template.copyOfRange(pos, pos + take)
+                    val isLast = (pos + take) >= template.size
+                    val pkt = AS608Protocol.buildDataPacket(chunk, isLast)
+                    serial?.write(pkt, 1000)
+                    pos += take
+                }
+
+                // algunos firmwares envían ACK final de recepción; intentamos leerlo sin bloquear la UX
+                val finalAck = readResponse(1500)
+                val finalCode = if (finalAck != null) AS608Protocol.getConfirmationCode(finalAck) else 0x00
+                val ok = (finalCode == 0x00)
+
+                withContext(Dispatchers.Main) {
+                    if (ok) onStatus?.invoke("✅ Template subido correctamente (${template.size} bytes)")
+                    else    onStatus?.invoke("⚠️ Template subido, pero ACK final no fue 0x00 (code=$finalCode)")
+                    onResult(true) // damos por bueno aunque el ACK final no llegue en algunos módulos
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error en uploadTemplate: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("❌ Error subiendo template: ${e.message}")
+                    onResult(false)
+                }
+            } finally {
+                isReading.set(false)
+            }
+        }
+    }
 
     // =======================================================
-    // 🔹 7) Utilidades
+    // 🔹 8) Guardar template en ID
+    // =======================================================
+    fun storeTemplate(pageId: Int, bufferId: Int = 1, onDone: (Boolean) -> Unit) {
+        if (isReading.get()) {
+            onStatus?.invoke("⏳ Operación en curso…")
+            onDone(false)
+            return
+        }
+        isReading.set(true)
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                sendCommand(AS608Protocol.store(bufferId, pageId))
+                val resp = readResponse(2000)
+                val code = if (resp != null) AS608Protocol.getConfirmationCode(resp) else -1
+                val ok = (code == 0x00)
+                withContext(Dispatchers.Main) {
+                    if (ok) onStatus?.invoke("✅ Template almacenado en ID=$pageId")
+                    else    onStatus?.invoke(AS608Protocol.confirmationMessage(code).ifEmpty { "⚠️ No se pudo almacenar (code=$code)" })
+                    onDone(ok)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error en storeTemplate: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("❌ Error guardando template: ${e.message}")
+                    onDone(false)
+                }
+            } finally {
+                isReading.set(false)
+            }
+        }
+    }
+
+    // =======================================================
+    // 🔹 9) Utilidades
     // =======================================================
     private data class ParseResult(
         val ackJustSeen: Boolean,
