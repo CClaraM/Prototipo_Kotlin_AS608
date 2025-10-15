@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class AS608Helper(private val context: Context) {
 
     // =======================================================
-    // 🔹 1) Estado base
+    // 🧭 1. Estado base y configuración
     // =======================================================
     private var serial: UsbSerialPort? = null
     private var job: Job? = null
@@ -25,7 +25,7 @@ class AS608Helper(private val context: Context) {
     var onImage: ((Bitmap) -> Unit)? = null
 
     // =======================================================
-    // 🔹 2) Inicio / cierre
+    // 🔌 2. Inicio y cierre de la conexión
     // =======================================================
     fun start(onStatus: (String) -> Unit, onImage: (Bitmap) -> Unit) {
         this.onStatus = onStatus
@@ -51,7 +51,7 @@ class AS608Helper(private val context: Context) {
 
         onStatus("🔌 AS608 conectado")
 
-        // ✨ Enviamos el handshake y limpiamos el buffer en una corrutina
+        // 🔄 Limpieza inicial de buffer
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 drainBuffer(300)
@@ -76,7 +76,7 @@ class AS608Helper(private val context: Context) {
     }
 
     // =======================================================
-    // 🔹 3) Comunicación básica
+    // 📡 3. Comunicación básica
     // =======================================================
     private fun sendCommand(cmd: ByteArray) {
         try {
@@ -113,9 +113,6 @@ class AS608Helper(private val context: Context) {
         }
     }
 
-    // =======================================================
-    // 🔹 4) limpieza
-    // =======================================================
     private fun drainBuffer(extraTimeMs: Long = 100) {
         val temp = ByteArray(1024)
         val start = System.currentTimeMillis()
@@ -128,7 +125,7 @@ class AS608Helper(private val context: Context) {
     }
 
     // =======================================================
-    // 🔹 5) Comandos altos
+    // 🧪 4. Comandos de alto nivel
     // =======================================================
     fun genImgWithResponse() = sendAndRead(AS608Protocol.genImg())
     fun img2TzWithResponse() = sendAndRead(AS608Protocol.img2Tz(1))
@@ -139,32 +136,52 @@ class AS608Helper(private val context: Context) {
     fun cancelWithResponse() = sendAndRead(AS608Protocol.cancel())
 
     // =======================================================
-    // 🔹 6) Imagen — verificar y subir
+    // 🧠 5. Lectura de parámetros
+    // =======================================================
+    fun readSysParameters(onParams: (String) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            onStatus?.invoke("📡 Solicitando parámetros del lector...")
+            sendCommand(AS608Protocol.readSysParams())
+            val resp = readResponse(2000)
+            if (resp != null) {
+                val msg = AS608Protocol.parseSysParams(resp)
+                withContext(Dispatchers.Main) {
+                    // ⬅️ Solo actualiza sysParams
+                    onParams(msg)
+
+                    // ✅ Mantiene log detallado sin llenar la etiqueta de estado
+                    onStatus?.invoke("✅ Parámetros recibidos")
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("❌ No se recibió respuesta del lector")
+                }
+            }
+            /*val msg = if (resp != null) AS608Protocol.parseSysParams(resp)
+            else "❌ No se recibió respuesta del lector"
+            withContext(Dispatchers.Main) {
+                onStatus?.invoke(msg)
+            }*/
+        }
+    }
+
+    // =======================================================
+    // 🧤 6. Verificación y lectura de imagen
     // =======================================================
     fun verifyFinger(callback: (Boolean) -> Unit) {
         CoroutineScope(Dispatchers.IO).launch {
             sendCommand(AS608Protocol.genImg())
             val resp = readResponse(2000)
+            val code = resp?.let { AS608Protocol.getConfirmationCode(it) } ?: -1
 
-            if (resp != null) {
-                val code = AS608Protocol.getConfirmationCode(resp)
-                if (code == 0x00) {
-                    withContext(Dispatchers.Main) {
-                        onStatus?.invoke("✅ Huella detectada")
-                        callback(true)
-                    }
-                } else {
-                    withContext(Dispatchers.Main) {
-                        onStatus?.invoke(AS608Protocol.confirmationMessage(code))
-                        callback(false)
-                    }
-                    delay(50)
-                    cancelWithResponse()
-                    drainBuffer(100)
+            if (code == 0x00) {
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("✅ Huella detectada")
+                    callback(true)
                 }
             } else {
                 withContext(Dispatchers.Main) {
-                    onStatus?.invoke("❌ No se recibió handshake de genImg")
+                    onStatus?.invoke(AS608Protocol.confirmationMessage(code))
                     callback(false)
                 }
                 delay(50)
@@ -177,14 +194,10 @@ class AS608Helper(private val context: Context) {
     suspend fun verifyBeforeGetImage(): Boolean {
         sendCommand(AS608Protocol.genImg())
         val resp = readResponse(2000)
-        if (resp != null) {
-            val code = AS608Protocol.getConfirmationCode(resp)
-            return code == 0x00
-        }
-        return false
+        return resp?.let { AS608Protocol.getConfirmationCode(it) == 0x00 } ?: false
     }
 
-    fun getImageClean() {
+    fun getImage() {
         if (isReading.get()) {
             onStatus?.invoke("⏳ Lectura en curso...")
             return
@@ -193,10 +206,9 @@ class AS608Helper(private val context: Context) {
 
         job = CoroutineScope(Dispatchers.IO).launch {
             try {
-                // ✅ Verificar huella primero
                 if (!verifyBeforeGetImage()) {
                     withContext(Dispatchers.Main) {
-                        delay(100) // 🕒 pequeña pausa para mejor UX
+                        delay(100)
                         onStatus?.invoke("⚠️ No se detectó huella. Cancelando lectura.")
                     }
                     cancelWithResponse()
@@ -205,71 +217,35 @@ class AS608Helper(private val context: Context) {
                 }
 
                 onStatus?.invoke("📷 Solicitando imagen...")
-
-                // 🚀 Enviar upImage (NO drenar antes/ni después)
                 sendCommand(AS608Protocol.upImage())
 
-                // 🧲 Buffers
                 val rawBuffer = ArrayList<Byte>(64 * 1024)
-                val imageBuffer = ArrayList<Byte>(128 * 288) // 36864 esperados
+                val imageBuffer = ArrayList<Byte>(128 * 288)
                 val temp = ByteArray(4096)
 
-                var ackOk = false
-                var sawFirstData = false
                 var sawLastPacket = false
-
                 val tEnd = System.currentTimeMillis() + 15_000
                 var lastDataTs = System.currentTimeMillis()
 
-                // 🔁 Bucle de lectura: ACK + DATA en el mismo flujo
                 while (System.currentTimeMillis() < tEnd) {
                     val n = try { serial?.read(temp, 300) ?: 0 } catch (_: Exception) { 0 }
                     if (n > 0) {
                         for (i in 0 until n) rawBuffer.add(temp[i])
                         lastDataTs = System.currentTimeMillis()
-
-                        // Parsear todo lo posible
                         val parseRes = parseIncomingStream(rawBuffer, imageBuffer)
-                        if (parseRes.ackJustSeen) {
-                            ackOk = true
-                            Log.d(TAG, "🤝 ACK (pid 0x07) detectado dentro del flujo, code=${parseRes.lastAckCode}")
-                        }
-                        if (parseRes.firstDataJustSeen && !sawFirstData) {
-                            sawFirstData = true
-                            Log.d(TAG, "🟡 Primer paquete de datos detectado (offset=${imageBuffer.size} bytes tras agregarlo)")
-                        }
-                        if (parseRes.lastPacketSeen && !sawLastPacket) {
+                        if (parseRes.lastPacketSeen) {
                             sawLastPacket = true
-                            Log.d(TAG, "🟢 Último paquete (pid=0x08) detectado en offset ${imageBuffer.size} bytes")
-                            // OJO: no salimos aún; dejamos que llegue cualquier resto colgado (si lo hubiera)
+                            break
                         }
-
-                        // Criterios de salida “sanos”
-                        if (sawLastPacket) break
-                        if (imageBuffer.size >= 128 * 288) break
-                    } else {
-                        // inactividad
-                        if (System.currentTimeMillis() - lastDataTs > 2_000) break
-                    }
+                    } else if (System.currentTimeMillis() - lastDataTs > 2000) break
                 }
 
-                Log.d(TAG, "📊 Total final acumulado antes de normalizar: ${imageBuffer.size} bytes (ACK=$ackOk, last=$sawLastPacket)")
-
                 val expected = 128 * 288
-                val final = when {
-                    imageBuffer.size == expected -> imageBuffer.toByteArray()
-                    imageBuffer.size > expected -> {
-                        Log.w(TAG, "⚠️ Excedente ${imageBuffer.size - expected} bytes, truncando.")
-                        imageBuffer.subList(0, expected).toByteArray()
-                    }
-                    else -> {
-                        Log.w(TAG, "⚠️ Faltan ${expected - imageBuffer.size} bytes, padding.")
-                        val out = ByteArray(expected)
-                        for (i in imageBuffer.indices) out[i] = imageBuffer[i]
-                        val pad = if (imageBuffer.isNotEmpty()) imageBuffer.last() else 0
-                        for (i in imageBuffer.size until expected) out[i] = pad
-                        out
-                    }
+                val final = ByteArray(expected)
+                val size = imageBuffer.size
+                val pad = if (imageBuffer.isNotEmpty()) imageBuffer.last() else 0
+                for (i in 0 until expected) {
+                    final[i] = if (i < size) imageBuffer[i] else pad
                 }
 
                 val bmp = convertToBitmapFinal(final)
@@ -290,216 +266,7 @@ class AS608Helper(private val context: Context) {
     }
 
     // =======================================================
-    // 🔹 7) Descarga y Cargar el template
-    // =======================================================
-    //Flujo: send(upChar) → stream ACK + DATA (pid 0x02/0x08) → acumular payload → devolver ByteArray
-    fun downloadTemplate(
-        bufferId: Int = 1,
-        onResult: (ByteArray?) -> Unit
-    ) {
-        if (isReading.get()) {
-            onStatus?.invoke("⏳ Operación en curso…")
-            onResult(null)
-            return
-        }
-        isReading.set(true)
-
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                onStatus?.invoke("📥 Solicitando template (UpChar)...")
-                sendCommand(AS608Protocol.upChar(bufferId))
-
-                val rawBuffer = ArrayList<Byte>(8 * 1024)
-                val templateBuffer = ArrayList<Byte>(1024) // típicamente ~512 bytes
-                val temp = ByteArray(2048)
-
-                var ackOk = false
-                var lastSeen = false
-                val tEnd = System.currentTimeMillis() + 8000
-                var lastTs = System.currentTimeMillis()
-
-                while (System.currentTimeMillis() < tEnd) {
-                    val n = try { serial?.read(temp, 200) ?: 0 } catch (_: Exception) { 0 }
-                    if (n > 0) {
-                        for (i in 0 until n) rawBuffer.add(temp[i])
-                        lastTs = System.currentTimeMillis()
-
-                        // parse paquetes
-                        while (rawBuffer.size >= 9) {
-                            // sincronizar header
-                            if (!(rawBuffer[0] == 0xEF.toByte() && rawBuffer[1] == 0x01.toByte())) {
-                                rawBuffer.removeAt(0); continue
-                            }
-                            if (rawBuffer.size < 9) break
-
-                            val pid = rawBuffer[6].toInt() and 0xFF
-                            val lenH = rawBuffer[7].toInt() and 0xFF
-                            val lenL = rawBuffer[8].toInt() and 0xFF
-                            val length = (lenH shl 8) or lenL
-                            val total = 9 + length
-                            if (rawBuffer.size < total) break
-
-                            val payloadLen = length - 2
-                            val payloadStart = 9
-                            val payloadEnd = payloadStart + payloadLen
-
-                            when (pid) {
-                                0x07 -> { // ACK
-                                    val code = if (payloadLen >= 1) (rawBuffer[payloadStart].toInt() and 0xFF) else -1
-                                    if (code == 0x00) {
-                                        ackOk = true
-                                        Log.d(TAG, "🤝 UpChar ACK OK")
-                                    } else {
-                                        Log.w(TAG, "⚠️ UpChar ACK code=$code")
-                                    }
-                                    repeat(total) { rawBuffer.removeAt(0) }
-                                }
-                                0x02, 0x08 -> { // DATA
-                                    for (i in payloadStart until payloadEnd) templateBuffer.add(rawBuffer[i])
-                                    if (pid == 0x08) {
-                                        lastSeen = true
-                                        Log.d(TAG, "🟢 Último paquete de template recibido (size parc=${templateBuffer.size})")
-                                    }
-                                    repeat(total) { rawBuffer.removeAt(0) }
-                                }
-                                else -> {
-                                    // desconocido → re-sync
-                                    rawBuffer.removeAt(0)
-                                }
-                            }
-                            // limpiar basura entre paquetes
-                            while (rawBuffer.size >= 2 &&
-                                !(rawBuffer[0] == 0xEF.toByte() && rawBuffer[1] == 0x01.toByte())) {
-                                rawBuffer.removeAt(0)
-                            }
-                        }
-
-                        if (lastSeen) break
-                    } else {
-                        if (System.currentTimeMillis() - lastTs > 1000) break
-                    }
-                }
-
-                val result = if (ackOk && templateBuffer.isNotEmpty()) templateBuffer.toByteArray() else null
-                withContext(Dispatchers.Main) {
-                    if (result != null) {
-                        onStatus?.invoke("✅ Template descargado (${result.size} bytes)")
-                    } else {
-                        onStatus?.invoke("⚠️ No se pudo descargar el template")
-                    }
-                    onResult(result)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error en downloadTemplate: ${e.message}")
-                withContext(Dispatchers.Main) {
-                    onStatus?.invoke("❌ Error descargando template: ${e.message}")
-                    onResult(null)
-                }
-            } finally {
-                isReading.set(false)
-            }
-        }
-    }
-
-    fun uploadTemplate(
-        bufferId: Int = 1,
-        template: ByteArray,
-        onResult: (Boolean) -> Unit
-    ) {
-        if (isReading.get()) {
-            onStatus?.invoke("⏳ Operación en curso…")
-            onResult(false)
-            return
-        }
-        isReading.set(true)
-
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                onStatus?.invoke("📤 Enviando template (DownChar)...")
-                sendCommand(AS608Protocol.downChar(bufferId))
-
-                // esperar pequeño ACK del downChar
-                val ack = readResponse(1500)
-                val ackCode = if (ack != null) AS608Protocol.getConfirmationCode(ack) else -1
-                if (ackCode != 0x00) {
-                    withContext(Dispatchers.Main) {
-                        onStatus?.invoke("❌ DownChar rechazado (code=$ackCode)")
-                        onResult(false)
-                    }
-                    return@launch
-                }
-
-                // enviar datos en paquetes de 128 bytes (DATA 0x02 y último 0x08)
-                val chunkSize = 128
-                var pos = 0
-                while (pos < template.size) {
-                    val remaining = template.size - pos
-                    val take = if (remaining > chunkSize) chunkSize else remaining
-                    val chunk = template.copyOfRange(pos, pos + take)
-                    val isLast = (pos + take) >= template.size
-                    val pkt = AS608Protocol.buildDataPacket(chunk, isLast)
-                    serial?.write(pkt, 1000)
-                    pos += take
-                }
-
-                // algunos firmwares envían ACK final de recepción; intentamos leerlo sin bloquear la UX
-                val finalAck = readResponse(1500)
-                val finalCode = if (finalAck != null) AS608Protocol.getConfirmationCode(finalAck) else 0x00
-                val ok = (finalCode == 0x00)
-
-                withContext(Dispatchers.Main) {
-                    if (ok) onStatus?.invoke("✅ Template subido correctamente (${template.size} bytes)")
-                    else    onStatus?.invoke("⚠️ Template subido, pero ACK final no fue 0x00 (code=$finalCode)")
-                    onResult(true) // damos por bueno aunque el ACK final no llegue en algunos módulos
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error en uploadTemplate: ${e.message}")
-                withContext(Dispatchers.Main) {
-                    onStatus?.invoke("❌ Error subiendo template: ${e.message}")
-                    onResult(false)
-                }
-            } finally {
-                isReading.set(false)
-            }
-        }
-    }
-
-    // =======================================================
-    // 🔹 8) Guardar template en ID
-    // =======================================================
-    fun storeTemplate(pageId: Int, bufferId: Int = 1, onDone: (Boolean) -> Unit) {
-        if (isReading.get()) {
-            onStatus?.invoke("⏳ Operación en curso…")
-            onDone(false)
-            return
-        }
-        isReading.set(true)
-
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                sendCommand(AS608Protocol.store(bufferId, pageId))
-                val resp = readResponse(2000)
-                val code = if (resp != null) AS608Protocol.getConfirmationCode(resp) else -1
-                val ok = (code == 0x00)
-                withContext(Dispatchers.Main) {
-                    if (ok) onStatus?.invoke("✅ Template almacenado en ID=$pageId")
-                    else    onStatus?.invoke(AS608Protocol.confirmationMessage(code).ifEmpty { "⚠️ No se pudo almacenar (code=$code)" })
-                    onDone(ok)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error en storeTemplate: ${e.message}")
-                withContext(Dispatchers.Main) {
-                    onStatus?.invoke("❌ Error guardando template: ${e.message}")
-                    onDone(false)
-                }
-            } finally {
-                isReading.set(false)
-            }
-        }
-    }
-
-    // =======================================================
-    // 🔹 9) Utilidades
+    // 🧰 7. Utilidades internas
     // =======================================================
     private data class ParseResult(
         val ackJustSeen: Boolean,
@@ -508,16 +275,6 @@ class AS608Helper(private val context: Context) {
         val lastPacketSeen: Boolean
     )
 
-    /**
-     * Parser por paquetes del AS608:
-     *   EF 01 | addr[4] | pid | lenH lenL | payload(len-2) | chksum[2]
-     * pid:
-     *   0x07 -> ACK (payload[0] = code)
-     *   0x02 -> DATA
-     *   0x08 -> DATA (último paquete)
-     *
-     * Retira paquetes completos del rawBuffer y acumula SOLO payload de imagen en imageBuffer.
-     */
     private fun parseIncomingStream(
         rawBuffer: MutableList<Byte>,
         imageBuffer: MutableList<Byte>
@@ -527,70 +284,56 @@ class AS608Helper(private val context: Context) {
         var firstDataSeenNow = false
         var lastSeen = false
 
-        fun available() = rawBuffer.size
-
-        // limpiar basura antes del header
-        while (available() >= 2 && !(rawBuffer[0] == 0xEF.toByte() && rawBuffer[1] == 0x01.toByte())) {
+        // 🧹 Limpiar basura antes del header
+        while (rawBuffer.size >= 2 && !(rawBuffer[0] == 0xEF.toByte() && rawBuffer[1] == 0x01.toByte())) {
             rawBuffer.removeAt(0)
         }
 
-        // procesar paquetes completos
-        while (available() >= 9) {
+        while (rawBuffer.size >= 9) {
             if (!(rawBuffer[0] == 0xEF.toByte() && rawBuffer[1] == 0x01.toByte())) {
-                // re-sincroniza por si se corrió
                 rawBuffer.removeAt(0)
                 continue
             }
 
-            if (available() < 9) break
+            if (rawBuffer.size < 9) break
 
             val pid = rawBuffer[6].toInt() and 0xFF
             val lenHi = rawBuffer[7].toInt() and 0xFF
             val lenLo = rawBuffer[8].toInt() and 0xFF
             val length = (lenHi shl 8) or lenLo
             val total = 9 + length
-            if (available() < total) break // paquete incompleto: esperar más bytes
+            if (rawBuffer.size < total) break
 
-            // payload sin checksum:
             val payloadLen = length - 2
             val payloadStart = 9
-            val payloadEnd = payloadStart + payloadLen // exclusivo
+            val payloadEnd = payloadStart + payloadLen
 
             when (pid) {
-                0x07 -> { // ACK
+                0x07 -> {
                     if (payloadLen >= 1) {
                         lastAck = rawBuffer[payloadStart].toInt() and 0xFF
                         ackSeen = true
                     }
-                    // consumir paquete completo
                     repeat(total) { rawBuffer.removeAt(0) }
                 }
-
-                0x02, 0x08 -> { // DATA (normal / último)
+                0x02, 0x08 -> {
                     if (!firstDataSeenNow && imageBuffer.isEmpty()) {
                         firstDataSeenNow = true
                     }
-                    // copiar payload (solo datos de imagen)
                     for (i in payloadStart until payloadEnd) {
                         imageBuffer.add(rawBuffer[i])
                     }
-                    // log del último
                     if (pid == 0x08) {
                         lastSeen = true
                     }
-                    // consumir paquete completo
                     repeat(total) { rawBuffer.removeAt(0) }
                 }
-
                 else -> {
-                    // paquete desconocido: descartar 1 byte para resinc
                     rawBuffer.removeAt(0)
                 }
             }
 
-            // después de consumir, intentar seguir con el siguiente paquete
-            // limpiar basura por si quedó algo previo al siguiente header
-            while (available() >= 2 && !(rawBuffer[0] == 0xEF.toByte() && rawBuffer[1] == 0x01.toByte())) {
+            while (rawBuffer.size >= 2 && !(rawBuffer[0] == 0xEF.toByte() && rawBuffer[1] == 0x01.toByte())) {
                 rawBuffer.removeAt(0)
             }
         }
@@ -602,18 +345,15 @@ class AS608Helper(private val context: Context) {
             lastPacketSeen = lastSeen
         )
     }
+
     private fun convertToBitmapFinal(imageData: ByteArray): Bitmap {
         val width = 128
         val height = 288
         val total = width * height
-
-        // Seguridad: no pasarnos de índice aunque vengan menos bytes
-        val safeData = if (imageData.size >= total) imageData else {
-            val out = ByteArray(total)
-            System.arraycopy(imageData, 0, out, 0, imageData.size)
+        val safeData = if (imageData.size >= total) imageData else ByteArray(total).also {
+            System.arraycopy(imageData, 0, it, 0, imageData.size)
             val pad = if (imageData.isNotEmpty()) imageData.last() else 0
-            for (i in imageData.size until total) out[i] = pad
-            out
+            for (i in imageData.size until total) it[i] = pad
         }
 
         val bmp = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
