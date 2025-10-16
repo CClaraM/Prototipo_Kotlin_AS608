@@ -11,10 +11,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import com.example.miappcompose.hardware.AS608Helper
 
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+
+import android.util.Log
 
 @Composable
 fun StableTopBar(title: String, modifier: Modifier = Modifier) {
@@ -45,8 +49,9 @@ fun AS608Screen(helper: AS608Helper) {
     var sysParams by remember { mutableStateOf("") }
     var fingerCount by remember { mutableStateOf<Int?>(null) }
 
-    val scrollState = rememberScrollState()
+    var templateIdText by remember { mutableStateOf("1") }
 
+    val scrollState = rememberScrollState()
     // 📝 Lista de logs
     val logList = remember { mutableStateListOf<String>() }
 
@@ -112,29 +117,51 @@ fun AS608Screen(helper: AS608Helper) {
             // ==========================================================
             Text("📸 Imagen", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
-            Row(
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Button(onClick = { helper.genImgWithResponse() }) { Text("Capturar") }
-                Button(onClick = { helper.img2TzWithResponse() }) { Text("Convertir") }
-            }
-
-            Spacer(Modifier.height(8.dp))
-            Row(
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Button(onClick = { helper.regModelWithResponse() }) { Text("Modelo") }
-                Button(onClick = { helper.storeWithResponse(1) }) { Text("Guardar ID=1") }
-            }
-
-            Spacer(Modifier.height(8.dp))
             Button(onClick = {
                 helper.verifyFinger { ok ->
                     if (ok) helper.getImage()
                 }
             }) { Text("Ver imagen") }
+
+            Spacer(Modifier.height(8.dp))
+            TextField(
+                value = templateIdText,
+                onValueChange = { templateIdText = it.filter { c -> c.isDigit() } },
+                label = { Text("ID para guardar") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Button(onClick = { helper.genImgWithResponse() }) { Text("Capturar") }
+                Button(onClick = { helper.convertWithResponse() }) { Text("Convertir") }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            Row(
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Button(
+                    onClick = {
+                        val id = templateIdText.toIntOrNull()
+                        if (id != null) {
+                            helper.storeTemplateWithResponse(id)
+                        } else {
+                            // si el usuario no pone un número válido
+                            helper.onStatus?.invoke("⚠️ ID inválido")
+                        }
+                    }
+                ) {
+                    Text("Guardar ID")
+                }
+
+                Button(onClick = { helper.searchWithResponse() }) { Text("Buscar") }
+            }
 
             Spacer(Modifier.height(16.dp))
 
@@ -147,16 +174,14 @@ fun AS608Screen(helper: AS608Helper) {
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Button(onClick = { helper.searchWithResponse() }) { Text("Buscar") }
-                Button(onClick = { helper.emptyWithResponse() }) { Text("Borrar todo") }
+                Button(onClick = { helper.deleteTemplateWithResponse(1) }) { Text("Borrar ID 1") }
+                Button(onClick = {
+                    //helper.readTemplateCount { count -> fingerCount = count }      // No olvidar
+                }) { Text("📇 Contar huellas") }
             }
 
             Spacer(Modifier.height(8.dp))
-            /*Button(onClick = {
-                helper.readTemplateCount { count -> fingerCount = count }      // No olvidar
-            }) { Text("📇 Contar huellas") }*/
 
-            Spacer(Modifier.height(16.dp))
 
             // ==========================================================
             // 🧾 3. Información del lector
@@ -182,19 +207,38 @@ fun AS608Screen(helper: AS608Helper) {
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                /*Button(onClick = {
-                    helper.downloadTemplate(onResult = { result ->
-                        if (result != null) addLog("✅ Template descargado (${result.size} bytes)")          // No olvidar
-                        else addLog("❌ Error al descargar template")
-                    })
-                }) { Text("⬇️ Descargar") } */
+                Button(onClick = {
+                    helper.downloadTemplateBase64(1) { base64 ->
+                        if (base64 != null) {
+                            Log.d("TEMPLATE", base64)
+                        }
+                    }
+                }) { Text("⬇️ Descargar ID 1") }
 
                 Button(onClick = {
-                    addLog("⚠️ Subir template no implementado aún")
-                }) { Text("⬆️ Subir") }
+                    val storedBase64 = "..." // Base64 desde BD o servidor
+                    helper.uploadTemplateBase64(storedBase64, 2)
+                }) { Text("⬆️ Subir 2") }
             }
 
             Spacer(Modifier.height(16.dp))
+
+            Button(onClick = {
+                helper.downloadTemplate { tpl ->
+                    if (tpl != null) {
+                        val size = tpl.size
+                        // ✨ Muestra en el log de actividad
+                        status = "📥 Template descargado — Tamaño: $size bytes"
+                        // 👇 Si tienes una lista de logs, también puedes agregarlo ahí
+                        // addLog("📥 Template descargado — Tamaño: $size bytes")
+                    } else {
+                        status = "❌ Error al descargar template"
+                        // addLog("❌ Error al descargar template")
+                    }
+                }
+            }) {
+                Text("📥 Descargar template")
+            }
 
             // ==========================================================
             // 📝 5. Log de actividad
@@ -220,11 +264,17 @@ fun AS608Screen(helper: AS608Helper) {
     DisposableEffect(Unit) {
         helper.start(
             onStatus = { msg ->
-                status = msg
-                addLog(msg)
-                if (msg.contains("Parámetros del lector")) {
-                    sysParams = msg
+                if (msg.startsWith("CODE:")) {
+                    val code = msg.removePrefix("CODE:").toInt()
+                    when (code) {
+                        0x00 -> status = "✅ Huella detectada"
+                        0x02 -> status = "⚠️ No se detectó huella"
+                        else -> status = "⚠️ Código desconocido: 0x${code.toString(16).uppercase()}"
+                    }
+                } else {
+                    status = msg
                 }
+                addLog(msg)
             },
             onImage = { bmp -> fingerprint = bmp }
         )

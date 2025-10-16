@@ -1,5 +1,6 @@
 package com.example.miappcompose.hardware
 
+
 object AS608Protocol {
 
     // =======================================================
@@ -38,6 +39,7 @@ object AS608Protocol {
     // 🔹 Búsqueda y administración
     const val CMD_SEARCH: Byte = 0x04
     const val CMD_EMPTY: Byte = 0x0D
+    const val CMD_DELETE_TEMPLATE: Byte = 0x0C
 
 
     // =======================================================
@@ -134,6 +136,15 @@ object AS608Protocol {
         return buildCommand(CMD_STORE, payload)
     }
 
+    fun deleteTemplate(pageId: Int, count: Int = 1): ByteArray {
+        val payload = byteArrayOf(
+            ((pageId shr 8) and 0xFF).toByte(),
+            (pageId and 0xFF).toByte(),
+            (count and 0xFF).toByte()
+        )
+        return buildCommand(CMD_DELETE_TEMPLATE, payload)
+    }
+
     fun upChar(bufferId: Int = 1): ByteArray =
         buildCommand(CMD_UP_CHAR, byteArrayOf(bufferId.toByte()))
 
@@ -180,7 +191,7 @@ object AS608Protocol {
      * 📝 Traduce código numérico de confirmación a mensaje legible.
      */
     fun confirmationMessage(code: Int): String = when (code) {
-        0x00 -> "" // Éxito silencioso
+        0x00 -> "✅ Huella detectada" // Ya no silencioso
         0x01 -> "❌ Error de paquete"
         0x02 -> "⚠️ No se detectó huella"
         0x03 -> "❌ Imagen muy desordenada"
