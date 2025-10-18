@@ -250,14 +250,22 @@ fun AS608Screen(helper: AS608Helper) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Button(onClick = {
-                    helper.downloadTemplate(
+                    helper.downloadRam(
                         bufferId = 1,
-                        onResult = { tpl ->
-                            if (tpl != null) {
-                                base64Template = AS608Protocol.encodeTemplateToBase64(tpl)
-                                status = "📥 Descargado ${tpl.size} bytes"
+                        base64 = { tplBase64 ->
+                            if (tplBase64 != null) {
+                                // ✅ Guardamos el template descargado en variable global o de estado
+                                base64Template = tplBase64
+                                status = "📥 Template RAM descargado correctamente (${tplBase64.length} chars)"
                             } else {
-                                status = "❌ Fallo al descargar"
+                                status = "❌ Error al descargar template desde RAM"
+                            }
+                        },
+                        onDone = { ok ->
+                            if (ok) {
+                                Log.d("BTN_RAM", "✅ Descarga completada correctamente")
+                            } else {
+                                Log.d("BTN_RAM", "⚠️ Falló la descarga")
                             }
                         }
                     )

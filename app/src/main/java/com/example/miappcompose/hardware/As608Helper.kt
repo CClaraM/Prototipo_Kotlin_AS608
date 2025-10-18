@@ -718,7 +718,7 @@ class AS608Helper(private val context: Context) {
      * @param onResult Callback con los bytes recibidos si fue descarga, o null si fue subida.
      * @param onDone Callback de estado final (éxito/fracaso).
      */
-    fun downloadTemplate(
+    private fun downloadTemplate(
         bufferId: Int = 1,
         timeout: Int = 8000,
         onResult: (ByteArray?) -> Unit = {},
@@ -924,10 +924,37 @@ class AS608Helper(private val context: Context) {
     // =======================================================
     fun downloadRam(
         bufferId: Int = 1,
-        onResult: (String?) -> Unit,
+        base64: (String?) -> Unit,
         onDone: (Boolean) -> Unit
     ) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                downloadTemplate(bufferId,onResult = { tpl ->
+                    if (tpl != null && tpl.isNotEmpty()) {
+                        val base64 = AS608Protocol.encodeTemplateToBase64(tpl)
+                        Log.d("DOWNLOAD_BASE64", "Template RAM descargado (${tpl.size} bytes)")
 
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            onStatus?.invoke("✅ Template RAM descargado (${tpl.size} bytes)")
+                            base64(base64)
+                            onDone(true)
+                        }
+                    } else {
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            onStatus?.invoke("⚠️ No se pudo descargar template desde RAM")
+                            base64(null)
+                            onDone(false)
+                        }
+                    }
+                })
+            } catch (e: Exception) {
+                Log.e("AS608", "Error en downRam: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("❌ Error: ${e.message}")
+                    onDone(false)
+                }
+            }
+        }
     }
     // =======================================================
     // 🔹 7. Borrar Template
