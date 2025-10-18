@@ -815,54 +815,55 @@ class AS608Helper(private val context: Context) {
     // =======================================================
     //
     // =======================================================
-    fun downloadTemplateBase64(pageId: Int, onResult: (String?) -> Unit) {
+    fun downloadTemplateBase64FromId(
+        pageId: Int,
+        bufferId: Int = 1,
+        onResult: (String?) -> Unit
+    ) {
         CoroutineScope(Dispatchers.IO).launch {
-            // 1. Cargar template desde el ID en el módulo
-            sendCommand(AS608Protocol.store(1, pageId)) // Cargar en buffer 1
-            val resp1 = readResponse(3000)
-            val code1 = if (resp1 != null) AS608Protocol.getConfirmationCode(resp1) else -1
-            if (code1 != 0x00) {
-                withContext(Dispatchers.Main) {
-                    onStatus?.invoke("⚠️ Error al cargar template ID=$pageId (code=$code1)")
-                    onResult(null)
-                }
-                return@launch
-            }
+            try {
+                // 1️⃣ Cargar el template desde el ID indicado en el módulo al buffer
+                sendCommand(AS608Protocol.loadChar(bufferId, pageId)) // 👈 Antes usabas store(1, pageId)
+                val resp = readResponse(3000)
+                val code = if (resp != null) AS608Protocol.getConfirmationCode(resp) else -1
 
-            // 2. Descargar el template desde buffer
-
-            val templateData = CompletableDeferred<ByteArray?>()
-            downloadTemplate(
-                bufferId = 1,
-                onResult = { tpl ->
-                    if (tpl != null && tpl.size in 700..900) { // rango esperado
-                        if (!templateData.isCompleted) templateData.complete(tpl)
-                    } else {
-                        if (!templateData.isCompleted) templateData.complete(null)
+                if (code != 0x00) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        onStatus?.invoke("⚠️ Error al cargar template ID=$pageId (code=$code)")
+                        onResult(null)
                     }
-                },
-                onDone = { ok ->
-                    if (!ok && !templateData.isCompleted) templateData.complete(null)
+                    return@launch
                 }
-            )
-            val tplBytes = templateData.await()
 
-            if (tplBytes != null) {
-                val base64 = AS608Protocol.encodeTemplateToBase64(tplBytes)
-                withContext(Dispatchers.Main) {
-                    onStatus?.invoke("✅ Template ID=$pageId descargado (${tplBytes.size} bytes)")
-                    onResult(base64)
-                }
-            } else {
-                withContext(Dispatchers.Main) {
+                // 2️⃣ Descargar el template desde RAM
+                downloadTemplate(
+                    bufferId = bufferId,
+                    onResult = { tpl ->
+                        if (tpl != null && tpl.isNotEmpty()) {
+                            val base64 = AS608Protocol.encodeTemplateToBase64(tpl)
+                            Log.d("DOWNLOAD_BASE64", "Template ID=$pageId descargado (${tpl.size} bytes)")
+
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                onStatus?.invoke("✅ Template ID=$pageId descargado (${tpl.size} bytes)")
+                                onResult(base64)
+                            }
+                        } else {
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                onStatus?.invoke("⚠️ No se pudo descargar template desde buffer")
+                                onResult(null)
+                            }
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                Log.e("DOWNLOAD_BASE64", "Error: ${e.message}")
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    onStatus?.invoke("❌ Error: ${e.message}")
                     onResult(null)
                 }
             }
         }
     }
-
-
-
 
     // =======================================================
     //
@@ -886,46 +887,47 @@ class AS608Helper(private val context: Context) {
             storeTemplateWithResponse(pageId, 1)
         }
     }
+    fun uploadRam(
+        base64: String,
+        bufferId: Int = 1,
+        onDone: (Boolean) -> Unit
+    ) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val tplBytes = AS608Protocol.decodeTemplateFromBase64(base64)
+                Log.d("TEST", "Tamaño a subir (decode Base64): ${tplBytes.size}")
+
+                val uploadOk = CompletableDeferred<Boolean>()
+                uploadTemplate(bufferId, tplBytes) { ok -> uploadOk.complete(ok) }
+                if (!uploadOk.await()) {
+                    onDone(false)
+                    withContext(Dispatchers.Main) {
+                        onStatus?.invoke("⚠️ Falló subida de template a buffer")
+                    }
+                    return@launch
+                }   else {
+                    onDone(true)
+                    onStatus?.invoke("✅ Template subido a RAM ID: ${bufferId}")
+                }
+            } catch (e: Exception) {
+                Log.e("AS608", "Error en uploadRam: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("❌ Error: ${e.message}")
+                    onDone(false)
+                }
+            }
+        }
+    }
 
     // =======================================================
     //   Descargar desde Ram
     // =======================================================
-    fun downloadTemplateFromBufferBase64(bufferId: Int = 1, onResult: (String?) -> Unit) {
-        CoroutineScope(Dispatchers.IO).launch {
-            if (!modelReadyInRam) {
-                withContext(Dispatchers.Main) {
-                    onStatus?.invoke("⚠️ No hay modelo generado en RAM. Usa 'Convertir' primero.")
-                    onResult(null)
-                }
-                return@launch
-            }
+    fun downloadRam(
+        bufferId: Int = 1,
+        onResult: (String?) -> Unit,
+        onDone: (Boolean) -> Unit
+    ) {
 
-            val templateData = CompletableDeferred<ByteArray?>()
-            //downloadTemplate(bufferId) { tpl -> templateData.complete(tpl) }
-            downloadTemplate(
-                bufferId=1,
-                onResult ={ tpl ->
-                    if (tpl != null){
-                        templateData.complete(tpl)
-                    }
-            })
-            val tplBytes = templateData.await()
-
-            if (tplBytes != null) {
-                Log.d("TEST", "Tamaño RAM: ${tplBytes.size}")
-                val base64 = AS608Protocol.encodeTemplateToBase64(tplBytes)//Base64.encodeToString(tplBytes, Base64.NO_WRAP)
-                Log.d("DOWNLOAD", "Tamaño de template RAM: ${tplBytes.size} bytes")
-                withContext(Dispatchers.Main) {
-                    onStatus?.invoke("✅ Template descargado desde RAM (buffer $bufferId) — ${tplBytes.size} bytes")
-                    onResult(base64)
-                }
-            } else {
-                withContext(Dispatchers.Main) {
-                    onStatus?.invoke("❌ No se pudo descargar template desde RAM")
-                    onResult(null)
-                }
-            }
-        }
     }
     // =======================================================
     // 🔹 7. Borrar Template

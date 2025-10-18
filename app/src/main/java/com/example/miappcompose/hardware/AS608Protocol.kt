@@ -155,6 +155,13 @@ object AS608Protocol {
     fun downChar(bufferId: Int = 1): ByteArray =
         buildCommand(CMD_DOWN_CHAR, byteArrayOf(bufferId.toByte()))
 
+    // 📥 Cargar template desde ID al buffer
+    fun loadChar(bufferId: Int = 1, pageId: Int): ByteArray {
+        val pidHigh = (pageId shr 8).toByte()
+        val pidLow = (pageId and 0xFF).toByte()
+        return buildCommand(0x07, byteArrayOf(bufferId.toByte(), pidHigh, pidLow))
+    }
+
     // --- Búsqueda y administración ---
     fun search(bufferId: Int = 1, startPage: Int = 0, pageNum: Int = 0x00A3): ByteArray {
         val payload = byteArrayOf(

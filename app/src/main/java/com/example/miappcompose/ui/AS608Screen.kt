@@ -218,19 +218,19 @@ fun AS608Screen(helper: AS608Helper) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Button(onClick = {
-                    CoroutineScope(Dispatchers.IO).launch {
-                        val base64 = helper.downloadTemplateBase64(1)
-                        withContext(Dispatchers.Main) {
-                            if (base64 != null) {
-                                base64Template = base64
-                                status = "📥 Template descargado correctamente (768 bytes)"
-                            } else {
-                                status = "❌ Error en la descarga"
-                            }
+                    helper.downloadTemplateBase64FromId(
+                        pageId = 1,
+                        bufferId = 1
+                    ) { base64 ->
+                        if (base64 != null) {
+                            base64Template = base64
+                            status = "📥 Template ID 1 descargado correctamente (${base64.length} chars)"
+                        } else {
+                            status = "❌ Error al descargar template desde ID"
                         }
                     }
                 }) {
-                    Text("📥 Descargar ID 1 (Seguro)")
+                    Text("📥 Descargar ID 1 (Base64)")
                 }
 
 
@@ -267,14 +267,13 @@ fun AS608Screen(helper: AS608Helper) {
 
                 Button(onClick = {
                     if (base64Template.isNotEmpty()) {
-                        val tplBytes = AS608Protocol.decodeTemplateFromBase64(base64Template)
-                        /*helper.transferTemplate(
+                        helper.uploadRam(
+                            base64 = base64Template,
                             bufferId = 1, // RAM, no se guarda en ID
-                            template = tplBytes,
                             onDone = { ok ->
                                 status = if (ok) "✅ Template subido" else "❌ Fallo al subir"
                             }
-                        )*/
+                        )
                     } else {
                         status = "⚠️ No hay template cargado en memoria"
                     }
