@@ -14,6 +14,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import com.example.miappcompose.hardware.AS608Helper
+import com.example.miappcompose.hardware.AS608Protocol
+
+//import android.util.Base64
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -50,6 +57,9 @@ fun AS608Screen(helper: AS608Helper) {
     var fingerCount by remember { mutableStateOf<Int?>(null) }
 
     var templateIdText by remember { mutableStateOf("1") }
+
+    var base64Template by remember { mutableStateOf("") }
+    //var base64Template by remember { mutableStateOf<String?>(null) }
 
     val scrollState = rememberScrollState()
     // 📝 Lista de logs
@@ -208,38 +218,73 @@ fun AS608Screen(helper: AS608Helper) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Button(onClick = {
-                    helper.downloadTemplateBase64(1) { base64 ->
-                        if (base64 != null) {
-                            Log.d("TEMPLATE", base64)
+                    CoroutineScope(Dispatchers.IO).launch {
+                        val base64 = helper.downloadTemplateBase64(1)
+                        withContext(Dispatchers.Main) {
+                            if (base64 != null) {
+                                base64Template = base64
+                                status = "📥 Template descargado correctamente (768 bytes)"
+                            } else {
+                                status = "❌ Error en la descarga"
+                            }
                         }
                     }
-                }) { Text("⬇️ Descargar ID 1") }
+                }) {
+                    Text("📥 Descargar ID 1 (Seguro)")
+                }
+
 
                 Button(onClick = {
-                    val storedBase64 = "..." // Base64 desde BD o servidor
-                    helper.uploadTemplateBase64(storedBase64, 2)
-                }) { Text("⬆️ Subir 2") }
+                    if (base64Template.isNotEmpty()) {
+                        helper.uploadTemplateBase64(base64Template, 2)
+                    } else {
+                        helper.onStatus?.invoke("⚠️ No hay template en memoria local")
+                    }
+                }) { Text("⬆️ Subir ID 2") }
             }
 
             Spacer(Modifier.height(16.dp))
 
-            Button(onClick = {
-                helper.downloadTemplate { tpl ->
-                    if (tpl != null) {
-                        val size = tpl.size
-                        // ✨ Muestra en el log de actividad
-                        status = "📥 Template descargado — Tamaño: $size bytes"
-                        // 👇 Si tienes una lista de logs, también puedes agregarlo ahí
-                        // addLog("📥 Template descargado — Tamaño: $size bytes")
-                    } else {
-                        status = "❌ Error al descargar template"
-                        // addLog("❌ Error al descargar template")
-                    }
+            Row(
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Button(onClick = {
+                    helper.downloadTemplate(
+                        bufferId = 1,
+                        onResult = { tpl ->
+                            if (tpl != null) {
+                                base64Template = AS608Protocol.encodeTemplateToBase64(tpl)
+                                status = "📥 Descargado ${tpl.size} bytes"
+                            } else {
+                                status = "❌ Fallo al descargar"
+                            }
+                        }
+                    )
+                }) {
+                    Text("📥 Descargar RAM")
                 }
-            }) {
-                Text("📥 Descargar template")
+
+                Button(onClick = {
+                    if (base64Template.isNotEmpty()) {
+                        val tplBytes = AS608Protocol.decodeTemplateFromBase64(base64Template)
+                        /*helper.transferTemplate(
+                            bufferId = 1, // RAM, no se guarda en ID
+                            template = tplBytes,
+                            onDone = { ok ->
+                                status = if (ok) "✅ Template subido" else "❌ Fallo al subir"
+                            }
+                        )*/
+                    } else {
+                        status = "⚠️ No hay template cargado en memoria"
+                    }
+                }) {
+                    Text("📤 Subir a RAM")
+                }
             }
 
+
+            Spacer(Modifier.height(16.dp))
             // ==========================================================
             // 📝 5. Log de actividad
             // ==========================================================

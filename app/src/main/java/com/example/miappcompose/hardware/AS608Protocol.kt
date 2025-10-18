@@ -1,5 +1,7 @@
 package com.example.miappcompose.hardware
 
+import android.util.Base64
+import android.util.Log
 
 object AS608Protocol {
 
@@ -99,6 +101,8 @@ object AS608Protocol {
         var sum = (pid.toInt() and 0xFF) + ((length shr 8) and 0xFF) + (length and 0xFF)
         payload.forEach { b -> sum += (b.toInt() and 0xFF) }
         val chk = sum and 0xFFFF
+        // DEBUG
+        Log.d("PKT-UP", "pid=${"%02X".format(pid)} len=${payload.size} chk=${"%04X".format(chk)} last=$isLast")
         packet.add(((chk shr 8) and 0xFF).toByte())
         packet.add((chk and 0xFF).toByte())
 
@@ -243,4 +247,18 @@ object AS608Protocol {
     // =======================================================
     fun printHex(data: ByteArray): String =
         data.joinToString(" ") { "%02X".format(it) }
+
+    /**
+     * 📤 Convierte un template binario en una cadena Base64 sin saltos de línea.
+     */
+    fun encodeTemplateToBase64(tpl: ByteArray): String {
+        return Base64.encodeToString(tpl, Base64.NO_WRAP)
+    }
+
+    /**
+     * 📥 Convierte una cadena Base64 a un ByteArray listo para usar con DownChar.
+     */
+    fun decodeTemplateFromBase64(base64: String): ByteArray {
+        return Base64.decode(base64, Base64.NO_WRAP)
+    }
 }
