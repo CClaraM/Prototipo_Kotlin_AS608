@@ -347,8 +347,46 @@ fun AS608Screen(helper: AS608Helper) {
                 }
             }
 
+            Spacer(Modifier.height(8.dp))
 
-            Spacer(Modifier.height(16.dp))
+            // ==========================================================
+            // 🧬 5. Password
+            // ==========================================================
+            Text("🔐 Seguridad", style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(8.dp))
+
+            Row(
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                modifier = Modifier.fillMaxWidth()
+            ){
+                // Establecer contraseña (ej. 123456)
+                Button(onClick = {
+                    val pwd: UInt = 123456u
+                    helper.setPassword(pwd) { ok ->
+                        if (ok) {
+                            helper.writeSysParameters { saved ->
+                                if (saved) {
+                                    status = "✅ Contraseña establecida y guardada"
+                                } else {status = "❌ Error al guardar contraseña"}
+                            }
+                        } else { status = "❌ Error al establecer contraseña" }
+                    }
+                }) {
+                    Text("🔐 Set Password")
+                }
+
+                // Verificar contraseña
+                Button(onClick = {
+                    val pwd: UInt = 123456u
+                    helper.verifyPassword(pwd) { ok ->
+                        status = if (ok) "✅ Contraseña correcta" else "❌ Contraseña incorrecta"
+                    }
+                }) {
+                    Text("🧾 Verify Password")
+                }
+
+            }
+            Spacer(Modifier.height(8.dp))
             // ==========================================================
             // 📝 5. Log de actividad
             // ==========================================================

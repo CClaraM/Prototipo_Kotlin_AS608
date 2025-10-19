@@ -476,7 +476,6 @@ class AS608Helper(private val context: Context) {
         }
     }
 
-
     // =======================================================
     // 🔹 5. Leer parámetros del dispositivo
     // =======================================================
@@ -497,6 +496,91 @@ class AS608Helper(private val context: Context) {
             }
         }
     }
+
+    fun setPassword(password: UInt, onDone: (Boolean) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val bytes = ByteArray(4) {
+                    ((password shr ((3 - it) * 8)) and 0xFFu).toByte()
+                }
+                pacedSend(AS608Protocol.setPassword(bytes))
+                val resp = readResponse(3000)
+                val code = if (resp != null) AS608Protocol.getConfirmationCode(resp) else -1
+
+                withContext(Dispatchers.Main) {
+                    if (code == 0x00) {
+                        onStatus?.invoke("🔐 Contraseña establecida correctamente")
+                        onDone(true)
+                    } else {
+                        onStatus?.invoke("⚠️ No se pudo establecer la contraseña (code=$code)")
+                        onDone(false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AS608", "Error configurando password: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("❌ Error: ${e.message}")
+                    onDone(false)
+                }
+            }
+        }
+    }
+
+    fun verifyPassword(password: UInt, onDone: (Boolean) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val bytes = ByteArray(4) {
+                    ((password shr ((3 - it) * 8)) and 0xFFu).toByte()
+                }
+                pacedSend(AS608Protocol.verifyPassword(bytes))
+                val resp = readResponse(3000)
+                val code = if (resp != null) AS608Protocol.getConfirmationCode(resp) else -1
+
+                withContext(Dispatchers.Main) {
+                    if (code == 0x00) {
+                        onStatus?.invoke("✅ Contraseña verificada correctamente")
+                        onDone(true)
+                    } else {
+                        onStatus?.invoke("❌ Contraseña incorrecta (code=$code)")
+                        onDone(false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AS608", "Error verificando password: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("❌ Error: ${e.message}")
+                    onDone(false)
+                }
+            }
+        }
+    }
+
+    fun writeSysParameters(onDone: (Boolean) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                pacedSend(AS608Protocol.writeSysParameters())
+                val resp = readResponse(3000)
+                val code = if (resp != null) AS608Protocol.getConfirmationCode(resp) else -1
+
+                withContext(Dispatchers.Main) {
+                    if (code == 0x00) {
+                        onStatus?.invoke("💾 Parámetros del sistema guardados correctamente")
+                        onDone(true)
+                    } else {
+                        onStatus?.invoke("⚠️ No se pudo guardar parámetros (code=$code)")
+                        onDone(false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AS608", "Error al guardar parámetros: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("❌ Error: ${e.message}")
+                    onDone(false)
+                }
+            }
+        }
+    }
+
 
     // =======================================================
     // 🧤 6. Verificación de huella

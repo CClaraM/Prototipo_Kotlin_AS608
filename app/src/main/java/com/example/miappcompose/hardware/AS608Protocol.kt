@@ -43,6 +43,9 @@ object AS608Protocol {
     const val CMD_SEARCH: Byte = 0x04
     const val CMD_EMPTY: Byte = 0x0D
     const val CMD_DELETE_TEMPLATE: Byte = 0x0C
+    const val CMD_SET_PASSWORD: Byte = 0x12
+    const val CMD_VERIFY_PASSWORD: Byte = 0x13
+    const val CMD_WRITE_SYS_PARA: Byte = 0x0E
 
 
     // =======================================================
@@ -181,7 +184,14 @@ object AS608Protocol {
 
     fun empty(): ByteArray = buildCommand(CMD_EMPTY)
 
+    fun setPassword(pwd: ByteArray): ByteArray =
+        buildCommand(CMD_SET_PASSWORD, pwd)
 
+    fun verifyPassword(pwd: ByteArray): ByteArray =
+        buildCommand(CMD_VERIFY_PASSWORD, pwd)
+
+    fun writeSysParameters(): ByteArray =
+        buildCommand(CMD_WRITE_SYS_PARA)
     // =======================================================
     // 🧾 5. Parsing de respuestas y ACK
     // =======================================================
