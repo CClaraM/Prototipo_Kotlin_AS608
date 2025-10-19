@@ -180,19 +180,29 @@ fun AS608Screen(helper: AS608Helper) {
             // ==========================================================
             Text("🔍 Base interna", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
+
             Row(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Button(onClick = {
+
                     val id = templateIdText.toIntOrNull()
                     if (id != null) {
-                        helper.deleteTemplateWithResponse(id)
+                        helper.deleteTemplateById(id) { success ->
+                            status = if (success) {
+                                "✅ Huella ${id} borrada"
+                            } else {
+                                "❌ No se pudo borrar la huella ${id}"
+                            }
+                        }
                     } else {
                         // si el usuario no pone un número válido
                         helper.onStatus?.invoke("⚠️ ID inválido")
                     }
-                }) { Text("Borrar ID") }
+                }) {
+                    Text("🗑️ Borrar ID")
+                }
 
                 Button(onClick = {
                     helper.deleteAllFingerprints {

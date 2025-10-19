@@ -148,11 +148,21 @@ object AS608Protocol {
         return buildCommand(CMD_STORE, payload)
     }
 
-    fun deleteTemplate(pageId: Int, count: Int = 1): ByteArray {
+    /*fun deleteTemplate(pageId: Int, count: Int = 1): ByteArray {
         val payload = byteArrayOf(
             ((pageId shr 8) and 0xFF).toByte(),
             (pageId and 0xFF).toByte(),
             (count and 0xFF).toByte()
+        )
+        return buildCommand(CMD_DELETE_TEMPLATE, payload)
+    }*/
+
+    fun deleteTemplate(pageId: Int, count: Int = 1): ByteArray {
+        val payload = byteArrayOf(
+            ((pageId shr 8) and 0xFF).toByte(),  // ID alto
+            (pageId and 0xFF).toByte(),          // ID bajo
+            ((count shr 8) and 0xFF).toByte(),   // Num alto (normalmente 0x00)
+            (count and 0xFF).toByte()            // Num bajo (normalmente 0x01)
         )
         return buildCommand(CMD_DELETE_TEMPLATE, payload)
     }

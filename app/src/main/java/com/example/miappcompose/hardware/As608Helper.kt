@@ -1161,6 +1161,111 @@ class AS608Helper(private val context: Context) {
     // =======================================================
     // 🔹 7. Borrar Template
     // =======================================================
+/*
+    fun deleteTemplateById(pageId: Int, count: Int = 1, onDone: (Boolean) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // 🧱 Usa tu función para construir el comando
+                val cmd = AS608Protocol.deleteTemplate(pageId, count)
+
+                // 📤 Enviar comando al lector
+                pacedSend(cmd)
+
+                // 📥 Leer respuesta
+                val resp = readResponse(3000)
+                val code = if (resp != null) AS608Protocol.getConfirmationCode(resp) else -1
+
+                withContext(Dispatchers.Main) {
+                    if (code == 0x00) {
+                        onStatus?.invoke("🗑️ Huella(s) ID=$pageId borrada(s) correctamente")
+                        onDone(true)
+                    } else {
+                        onStatus?.invoke("⚠️ Fallo al borrar ID=$pageId (code=$code)")
+                        onDone(false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AS608", "Error borrando ID=$pageId: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("❌ Error: ${e.message}")
+                    onDone(false)
+                }
+            }
+        }
+    }
+*/
+    /*
+    fun deleteTemplateById(pageId: Int, onDone: (Boolean) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // 👇 Empaquetar PageID en dos bytes (High / Low)
+                val pageIdHigh = ((pageId shr 8) and 0xFF).toByte()
+                val pageIdLow = (pageId and 0xFF).toByte()
+
+                // 👇 Número de plantillas a borrar (normalmente 1)
+                val numHigh = 0x00.toByte()
+                val numLow = 0x01.toByte()
+
+                // 🔸 Armar comando completo PS_DeleteChar
+                val cmd = AS608Protocol.buildCommand(
+                    0x0C, // Código de borrado
+                    byteArrayOf(pageIdHigh, pageIdLow, numHigh, numLow)
+                )
+
+                // 📤 Enviar comando
+                pacedSend(cmd)
+
+                // 📥 Leer respuesta
+                val resp = readResponse(3000)
+                val code = if (resp != null) AS608Protocol.getConfirmationCode(resp) else -1
+
+                withContext(Dispatchers.Main) {
+                    if (code == 0x00) {
+                        onStatus?.invoke("🗑️ Huella ID=$pageId borrada correctamente")
+                        onDone(true)
+                    } else {
+                        onStatus?.invoke("⚠️ Fallo al borrar ID=$pageId (code=$code)")
+                        onDone(false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AS608", "Error borrando ID=$pageId: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("❌ Error: ${e.message}")
+                    onDone(false)
+                }
+            }
+        }
+    }*/
+
+    fun deleteTemplateById(pageId: Int, onDone: (Boolean) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val cmd = AS608Protocol.deleteTemplate(pageId)
+                pacedSend(cmd)
+
+                val resp = readResponse(3000)
+                val code = if (resp != null) AS608Protocol.getConfirmationCode(resp) else -1
+
+                withContext(Dispatchers.Main) {
+                    if (code == 0x00) {
+                        onStatus?.invoke("🗑️ Huella ID=$pageId borrada correctamente")
+                        onDone(true)
+                    } else {
+                        onStatus?.invoke("⚠️ Fallo al borrar ID=$pageId (code=$code)")
+                        onDone(false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AS608", "Error borrando ID=$pageId: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("❌ Error: ${e.message}")
+                    onDone(false)
+                }
+            }
+        }
+    }
+
 
     fun deleteTemplateWithResponse(pageId: Int) {
         CoroutineScope(Dispatchers.IO).launch {
