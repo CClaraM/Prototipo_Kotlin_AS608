@@ -184,14 +184,57 @@ fun AS608Screen(helper: AS608Helper) {
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Button(onClick = { helper.deleteTemplateWithResponse(1) }) { Text("Borrar ID 1") }
                 Button(onClick = {
-                    //helper.readTemplateCount { count -> fingerCount = count }      // No olvidar
-                }) { Text("📇 Contar huellas") }
+                    val id = templateIdText.toIntOrNull()
+                    if (id != null) {
+                        helper.deleteTemplateWithResponse(id)
+                    } else {
+                        // si el usuario no pone un número válido
+                        helper.onStatus?.invoke("⚠️ ID inválido")
+                    }
+                }) { Text("Borrar ID") }
+
+                Button(onClick = {
+                    helper.deleteAllFingerprints {
+                        status = if (it) "🧹 Huellas borradas correctamente" else "❌ Error al borrar huellas"
+                    }
+                }) {
+                    Text("🧼 Borrar todo")
+                }
             }
 
             Spacer(Modifier.height(8.dp))
 
+            Row(
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                modifier = Modifier.fillMaxWidth()
+            ){
+                Button(onClick = {
+                    val id = templateIdText.toIntOrNull()
+                    if (id != null && id < 2) {
+                        helper.getFingerprintInfo(id) { count, ids ->
+                            status = if (count > 0) {
+                                "📊 Huellas registradas: $count\n🆔 IDs ocupados: $ids"
+                            } else {
+                                "⚠️ No hay huellas registradas"
+                            }
+                        }
+                    } else {
+                        // si el usuario no pone un número válido
+                        helper.onStatus?.invoke("⚠️ ID inválido")
+                    }
+                }) { Text("📋 Leer pagina IDs") }
+
+                Button(onClick = {
+                    helper.getAllFingerprintInfo { total, ids ->
+                        status = "📊 Total: $total huellas\n🆔 IDs: $ids"
+                    }
+                }) {
+                    Text("📋 Leer All IDs")
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
 
             // ==========================================================
             // 🧾 3. Información del lector
@@ -218,29 +261,43 @@ fun AS608Screen(helper: AS608Helper) {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Button(onClick = {
-                    helper.downloadTemplateBase64FromId(
-                        pageId = 1,
-                        bufferId = 1
-                    ) { base64 ->
-                        if (base64 != null) {
-                            base64Template = base64
-                            status = "📥 Template ID 1 descargado correctamente (${base64.length} chars)"
-                        } else {
-                            status = "❌ Error al descargar template desde ID"
+
+                    val id = templateIdText.toIntOrNull()
+                    if (id != null) {
+                        helper.downloadTemplateBase64FromId(
+                            pageId = 1,
+                            bufferId = id
+                        ) { base64 ->
+                            if (base64 != null) {
+                                base64Template = base64
+                                status = "📥 Template ID 1 descargado correctamente (${base64.length} chars)"
+                            } else {
+                                status = "❌ Error al descargar template desde ID"
+                            }
                         }
+                    } else {
+                        // si el usuario no pone un número válido
+                        helper.onStatus?.invoke("⚠️ ID inválido")
                     }
+
                 }) {
-                    Text("📥 Descargar ID 1 (Base64)")
+                    Text("📥 Descargar ID")
                 }
 
 
                 Button(onClick = {
                     if (base64Template.isNotEmpty()) {
-                        helper.uploadTemplateBase64(base64Template, 2)
+                        val id = templateIdText.toIntOrNull()
+                        if (id != null) {
+                            helper.uploadTemplateBase64(base64Template, id)
+                        } else {
+                            // si el usuario no pone un número válido
+                            helper.onStatus?.invoke("⚠️ ID inválido")
+                        }
                     } else {
                         helper.onStatus?.invoke("⚠️ No hay template en memoria local")
                     }
-                }) { Text("⬆️ Subir ID 2") }
+                }) { Text("📤 Subir ID") }
             }
 
             Spacer(Modifier.height(16.dp))

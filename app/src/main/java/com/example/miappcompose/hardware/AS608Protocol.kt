@@ -39,6 +39,7 @@ object AS608Protocol {
     const val CMD_DOWN_CHAR: Byte = 0x09
 
     // 🔹 Búsqueda y administración
+    const val  CMD_INDEX_PLT: Byte = 0x1F
     const val CMD_SEARCH: Byte = 0x04
     const val CMD_EMPTY: Byte = 0x0D
     const val CMD_DELETE_TEMPLATE: Byte = 0x0C
@@ -120,6 +121,10 @@ object AS608Protocol {
 
     // --- Información ---
     fun readSysParams(): ByteArray = buildCommand(CMD_READ_SYS_PARA)
+
+    fun readIndexTable(pageId: Int): ByteArray =
+        buildCommand(CMD_INDEX_PLT, byteArrayOf(pageId.toByte()))
+
 
     // --- Imagen ---
     fun genImg(): ByteArray = buildCommand(CMD_GEN_IMAGE)

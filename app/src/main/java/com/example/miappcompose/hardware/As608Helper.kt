@@ -255,12 +255,31 @@ class AS608Helper(private val context: Context) {
     }
 
     /** Borrar toda la base de datos del lector */
-    fun emptyWithResponse() = launchCmd {
-        purgeBoth()
-        pacedSend(AS608Protocol.empty())
-        val resp = readResponse(2000)
-        val msg = if (resp != null) AS608Protocol.parseResponse(resp) else "⚠️ No se recibió respuesta"
-        msg?.let { withContext(Dispatchers.Main) { onStatus?.invoke(it) } }
+    fun deleteAllFingerprints(onDone: (Boolean) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                purgeBoth()
+                pacedSend(AS608Protocol.empty())
+                val resp = readResponse(3000)
+                val code = if (resp != null) AS608Protocol.getConfirmationCode(resp) else -1
+
+                withContext(Dispatchers.Main) {
+                    if (code == 0x00) {
+                        onStatus?.invoke("🧹 Todas las huellas han sido eliminadas")
+                        onDone(true)
+                    } else {
+                        onStatus?.invoke("⚠️ Falló el borrado de huellas (code=$code)")
+                        onDone(false)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AS608", "Error borrando huellas: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("❌ Error: ${e.message}")
+                    onDone(false)
+                }
+            }
+        }
     }
 
     /** Cancelar operación actual */
@@ -358,6 +377,105 @@ class AS608Helper(private val context: Context) {
             }
         }
     }
+
+    fun getFingerprintInfo(PageId: Int = 0, onResult: (Int, List<Int>) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                sendCommand(AS608Protocol.readIndexTable(PageId))
+                val resp = readResponse(3000)
+
+                if (resp == null) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        onStatus?.invoke("⚠️ No se pudo leer la tabla de índices (sin respuesta)")
+                        onResult(0, emptyList())
+                    }
+                    return@launch
+                }
+
+                // Validación mínima de ACK
+                if (resp.size < 44 || resp[6] != 0x07.toByte()) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        onStatus?.invoke("⚠️ Respuesta inválida (${resp.size} bytes)")
+                        onResult(0, emptyList())
+                    }
+                    return@launch
+                }
+
+                val code = AS608Protocol.getConfirmationCode(resp)
+                if (code != 0x00) {
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        onStatus?.invoke("⚠️ ACK code != 0 (code=$code)")
+                        onResult(0, emptyList())
+                    }
+                    return@launch
+                }
+
+                onStatus?.invoke("⚠️ Respuesta (${resp.size} bytes)")
+
+                // 🟢 Tabla correcta: bytes 10..44 (35 bytes)
+                val indexData = resp.copyOfRange(10, 42)
+                // Decodificación (orden invertido confirmado para tu sensor)
+                var count = 0
+                val occupiedIds = mutableListOf<Int>()
+                indexData.forEachIndexed { byteIndex, b ->
+                    val v = b.toInt() and 0xFF
+                    count += Integer.bitCount(v)
+                    for (bit in 0..7) {
+                        if (((v shr bit) and 1) == 1) {
+                            val pageId = (PageId * 256) + (byteIndex * 8) + bit
+                            occupiedIds.add(pageId)
+                        }
+                    }
+                }
+
+                occupiedIds.sort()
+
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    onStatus?.invoke("📊 Total: $count huellas\n🆔 IDs: $occupiedIds")
+                    onResult(count, occupiedIds)
+                }
+            } catch (e: Exception) {
+                Log.e("AS608", "Error leyendo índice: ${e.message}")
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    onStatus?.invoke("❌ Error: ${e.message}")
+                    onResult(0, emptyList())
+                }
+            }
+        }
+    }
+
+    fun getAllFingerprintInfo(onResult: (Int, List<Int>) -> Unit) {
+        CoroutineScope(Dispatchers.IO).launch {
+            var totalCount = 0
+            val allIds = mutableListOf<Int>()
+
+            val latch = CompletableDeferred<Unit>()
+
+            // 📄 Leer página 0
+            getFingerprintInfo(0) { count0, ids0 ->
+                totalCount += count0
+                allIds.addAll(ids0)
+
+                // 📄 Leer página 1
+                getFingerprintInfo(1) { count1, ids1 ->
+                    totalCount += count1
+                    allIds.addAll(ids1)
+
+                    // 🧹 Ordenar IDs combinados
+                    allIds.sort()
+                    latch.complete(Unit)
+                }
+            }
+
+            latch.await()
+
+            withContext(Dispatchers.Main) {
+                onStatus?.invoke("📊 Total: $totalCount huellas\n🆔 IDs: $allIds")
+                onResult(totalCount, allIds)
+            }
+        }
+    }
+
 
     // =======================================================
     // 🔹 5. Leer parámetros del dispositivo
