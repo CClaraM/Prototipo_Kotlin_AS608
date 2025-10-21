@@ -76,6 +76,22 @@ class AS608Helper(private val context: Context) {
         }
     }
 
+    /**
+     * Inicia el lector y verifica la contraseña inmediatamente.
+     *
+     * - Abre la conexión (start) si no está abierta.
+     * - Intenta verificar la contraseña hasta `attempts` veces (espera `attemptDelayMs` entre intentos).
+     * - Si se verifica, deja la conexión abierta y marca isUnlocked = true.
+     * - Si NO se verifica, opcionalmente cierra la conexión (stop) y notifica por onStatus.
+     *
+     * Uso desde UI (Composable DisposableEffect):
+     * helper.startPass(
+     *   password = 0x12340000u,
+     *   onStatus = { msg -> status = msg },
+     *   onImage  = { bmp -> fingerprint = bmp }
+     * )
+     */
+
     private fun sendCommand(cmd: ByteArray) {
         try {
             serial?.write(cmd, 1000)
@@ -783,6 +799,106 @@ class AS608Helper(private val context: Context) {
             }
         }
     }
+
+    fun startPass(
+        password: UInt = 0x12340000u,
+        baudrate: Int = 57600,
+        onStatus: (String) -> Unit,
+        onImage: (Bitmap) -> Unit
+    ) {
+        // abre puerto, setea params, handshake básico
+        start(onStatus, onImage)
+
+        CoroutineScope(Dispatchers.IO).launch {
+            delay(800) // pequeño boot time
+
+            // Intenta directamente verifyPassword en la dirección actual (por si ya quedó fijada)
+            verifyPassword(password) { res ->
+                val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                if (res.success) {
+                    handler.post { onStatus("🔓 Lector desbloqueado") }
+                } else {
+                    // Si falla, intenta recuperación por broadcast
+                    recoverSensor(password) { rec ->
+                        if (rec.success) {
+                            handler.post { onStatus("🔓 Desbloqueado vía broadcast (${rec.message})") }
+                        } else {
+                            handler.post {
+                                onStatus("🔒 No se pudo desbloquear: ${rec.message}")
+                                stop()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun recoverSensor(
+        password: UInt = 0x00000000u, // ajusta si tu módulo ya tiene password
+        onDone: (SDKResult<Unit>) -> Unit
+    ) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // 1) Forzar broadcast
+                AS608Protocol.setTargetAddress(0xFFFFFFFFu)
+                purgeBoth()
+
+                // 2) VerifyPassword con broadcast
+                pacedSend(AS608Protocol.verifyPassword(
+                    byteArrayOf(
+                        ((password shr 24) and 0xFFu).toByte(),
+                        ((password shr 16) and 0xFFu).toByte(),
+                        ((password shr 8) and 0xFFu).toByte(),
+                        (password and 0xFFu).toByte()
+                    )
+                ), postDelayMs = 10)
+
+                val vResp = readResponse(3000)
+                val vCode = if (vResp != null) AS608Protocol.getConfirmationCode(vResp) else -1
+                if (vCode != 0x00) {
+                    withContext(Dispatchers.Main) {
+                        onStatus?.invoke("🔒 VerifyPassword falló en broadcast (code=$vCode)")
+                        onDone(SDKResult.fail(vCode, "VerifyPassword (broadcast) falló"))
+                    }
+                    return@launch
+                }
+
+                // 3) ReadSysParams para conocer la dirección real (viene en el HEADER)
+                pacedSend(AS608Protocol.readSysParams(), postDelayMs = 10)
+                val sResp = readResponse(3000)
+                if (sResp == null) {
+                    withContext(Dispatchers.Main) {
+                        onStatus?.invoke("⚠️ ReadSysParams sin respuesta")
+                        onDone(SDKResult.fail(-1, "Sin respuesta en ReadSysParams"))
+                    }
+                    return@launch
+                }
+
+                val realAddr = AS608Protocol.addressFromHeader(sResp)
+                if (realAddr == null || realAddr == 0xFFFFFFFFu) {
+                    withContext(Dispatchers.Main) {
+                        onStatus?.invoke("⚠️ No pude deducir dirección real")
+                        onDone(SDKResult.fail(-1, "No se pudo deducir dirección real"))
+                    }
+                    return@launch
+                }
+
+                // 4) Fijar dirección real y devolver OK
+                AS608Protocol.setTargetAddress(realAddr)
+                withContext(Dispatchers.Main) {
+                    onStatus?.invoke("✅ Dirección del módulo: %08X".format(realAddr.toLong()))
+                    onDone(SDKResult.ok(message = "Recover OK — addr=%08X".format(realAddr.toLong())))
+                }
+            } catch (e: Exception) {
+                Log.e("AS608", "recoverSensor error: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onDone(SDKResult.fail(-1, "Error en recoverSensor: ${e.message}"))
+                }
+            }
+        }
+    }
+
 
     fun getImage(onDone: (SDKResult<Bitmap>) -> Unit) = launch {
         if (isReading.get()) { withContext(Dispatchers.Main){ onDone(SDKResult.fail(message = "Lectura en curso")) }; return@launch }

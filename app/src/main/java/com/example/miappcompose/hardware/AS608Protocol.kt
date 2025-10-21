@@ -1,8 +1,10 @@
 package com.example.miappcompose.hardware
 
 object AS608Protocol {
+    @Volatile private var targetAddress: UInt = 0xFFFFFFFFu
     private val HEADER = byteArrayOf(0xEF.toByte(), 0x01.toByte())
     private val ADDRESS = byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte())
+    const val CMD_SET_ADDR: Byte = 0x15
     const val PID_COMMAND: Byte = 0x01
     const val PID_DATA: Byte = 0x02
     const val PID_ACK: Byte = 0x07
@@ -80,6 +82,33 @@ object AS608Protocol {
         else -> "Código desconocido: 0x${code.toString(16)}"
     }
     fun handshake(): ByteArray = buildCommand(CMD_HANDSHAKE)
+
+    fun setTargetAddress(addr: UInt) {
+        targetAddress = addr
+    }
+
+    private fun uIntToBytesBE(u: UInt): ByteArray =
+        byteArrayOf(
+            ((u shr 24) and 0xFFu).toByte(),
+            ((u shr 16) and 0xFFu).toByte(),
+            ((u shr 8) and 0xFFu).toByte(),
+            (u and 0xFFu).toByte()
+        )
+
+    fun getTargetAddress(): UInt = targetAddress
+
+    fun setModuleAddress(newAddr: UInt): ByteArray =
+        buildCommand(CMD_SET_ADDR, uIntToBytesBE(newAddr))
+
+    fun addressFromHeader(data: ByteArray): UInt? {
+        if (data.size < 7 || data[0] != 0xEF.toByte() || data[1] != 0x01.toByte()) return null
+        val b2 = (data[2].toInt() and 0xFF)
+        val b3 = (data[3].toInt() and 0xFF)
+        val b4 = (data[4].toInt() and 0xFF)
+        val b5 = (data[5].toInt() and 0xFF)
+        return ((b2 shl 24) or (b3 shl 16) or (b4 shl 8) or b5).toUInt()
+    }
+
     fun readSysParams(): ByteArray = buildCommand(CMD_READ_SYS_PARA)
     fun setSysParam(paramNo: Int, value: Int): ByteArray {
         return buildCommand(

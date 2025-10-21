@@ -251,7 +251,7 @@ fun AS608Screen(helper: AS608Helper) {
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
                 Button(onClick = {
-                    helper.verifyPassword(0x12340000u) { res ->
+                    helper.verifyPassword(0x00000000u) { res ->
                         status = if (res.success) "🔓 Password OK" else "🔒 ${res.message}"
                     }
                 }) { Text("Verify Pass 12340000") }
@@ -263,15 +263,35 @@ fun AS608Screen(helper: AS608Helper) {
                     Text("🧱 Security Lvl 1")
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = {
+                helper.recoverSensor(
+                    password = 0x12340000u
+                ) { result ->
+                    if (result.success) {
+                        status = "✅ ${result.message}"
+                    } else {
+                        status = "❌ ${result.message} (code=${result.errorCode})"
+                    }
+                }
+            }) {
+                Text("🆘 Recuperar sensor")
+            }
+
 
         }
     }
 
     DisposableEffect(Unit) {
-        helper.start(
-            onStatus = { msg -> status = msg },
-            onImage = { bmp -> fingerprint = bmp }
-        )
-        onDispose { helper.stop() }
+        //helper.startPass(
+        //     password = 0x12340000u,
+        //     onStatus = { msg -> status = msg },
+        //     onImage = { bmp -> fingerprint = bmp }
+        // )
+       helper.start(
+           onStatus = { msg -> status = msg },
+           onImage = { bmp -> fingerprint = bmp }
+       )
+       onDispose { helper.stop() }
     }
 }
